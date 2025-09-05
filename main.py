@@ -40,14 +40,24 @@ def enviar_orden(symbol, accion, lotes, riesgo_pct, ratio):
         raise Exception("No se pudo obtener información de la cuenta MT5")
     print(acc_info.login, acc_info.balance, acc_info.equity)
 
-    # cambiar simbolo de DJ30 a US30 si es necesario
+    # cambiar simbolo de DJ30 a US30 si es necesario mover fuera en config refactorizar
     if symbol.upper() == "DJ30":
         symbol = "US30"
+
+    info_symbol = mt5.symbol_info(symbol)
+    if info_symbol is None:
+        raise Exception(f"No se encontró información del símbolo {symbol}")
+    
+    min_volume = info_symbol.volume_min
+    max_volume = info_symbol.volume_max
+    step_volume = info_symbol.volume_step
+
 
     equity = acc_info.equity
     riesgo_usd = equity * riesgo_pct
 
     lotes = lotes * equity / 10000 # ajustar lotes según balance de referencia en este caso 10k
+    lotes = round(lotes / step_volume) * step_volume # redondear el loteje a uno permitido
 
     tick = mt5.symbol_info_tick(symbol)
     if tick is None:
