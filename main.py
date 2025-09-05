@@ -31,7 +31,7 @@ def calcular_sl_tp(symbol, entry_price, lotes, riesgo_usd, accion, ratio=2):
 
     return sl, tp
 
-def enviar_orden(symbol, accion, lotes, riesgo_pct, ratio):
+def enviar_orden(signal_symbol, accion, lotes, riesgo_pct, ratio):
     """
     Envía una orden a MT5 según los parámetros.
     """
@@ -40,13 +40,12 @@ def enviar_orden(symbol, accion, lotes, riesgo_pct, ratio):
         raise Exception("No se pudo obtener información de la cuenta MT5")
     print(acc_info.login, acc_info.balance, acc_info.equity)
 
-    # cambiar simbolo de DJ30 a US30 si es necesario mover fuera en config refactorizar
-    if symbol.upper() == "DJ30":
-        symbol = "US30"
-
-    info_symbol = mt5.symbol_info(symbol)
+    # Cambiar símbolo de señal Telegram a símbolo Broker correcto
+    signal_symbol = config.simbolos_broker.get(signal_symbol, signal_symbol)
+       
+    info_symbol = mt5.symbol_info(signal_symbol)
     if info_symbol is None:
-        raise Exception(f"No se encontró información del símbolo {symbol}")
+        raise Exception(f"No se encontró información del símbolo {signal_symbol}")
     
     min_volume = info_symbol.volume_min
     max_volume = info_symbol.volume_max
@@ -59,16 +58,16 @@ def enviar_orden(symbol, accion, lotes, riesgo_pct, ratio):
     lotes = lotes * equity / 10000 # ajustar lotes según balance de referencia en este caso 10k
     lotes = round(lotes / step_volume) * step_volume # redondear el loteje a uno permitido
 
-    tick = mt5.symbol_info_tick(symbol)
+    tick = mt5.symbol_info_tick(signal_symbol)
     if tick is None:
-        raise Exception(f"No se pudo obtener el tick de {symbol}")
+        raise Exception(f"No se pudo obtener el tick de {signal_symbol}")
 
     precio = tick.ask if accion == "compra" else tick.bid
-    sl, tp = calcular_sl_tp(symbol, precio, lotes, riesgo_usd, accion, ratio)
+    sl, tp = calcular_sl_tp(signal_symbol, precio, lotes, riesgo_usd, accion, ratio)
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": symbol,
+        "symbol": signal_symbol,
         "volume": lotes,
         "type": mt5.ORDER_TYPE_BUY if accion == "compra" else mt5.ORDER_TYPE_SELL,
         "price": precio,
