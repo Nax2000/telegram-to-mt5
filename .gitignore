@@ -1,2 +1,5 @@
 config.py
-session.session
+*.session
+*.session-journal
+.env
+*.pyc

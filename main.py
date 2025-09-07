@@ -7,11 +7,23 @@ import config
 # FUNCIONES AUXILIARES
 # ==============================
 
-def calcular_sl_tp(symbol, entry_price, lotes, riesgo_usd, accion, ratio=2):
+def calcular_lotaje(symbol, riesgo_usd, SL_distance):
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        raise Exception(f"No se encontró información del símbolo {symbol}")
+    
+    value_tick = info.trade_tick_value
+
+    lot_size = riesgo_usd / (SL_distance * value_tick)
+
+    return lot_size
+    
+
+def calcular_sl_tp(symbol, entry_price, accion, ratio=2):
     """
     Calcula StopLoss y TakeProfit en función del riesgo y ratio.
     """
-    info = mt5.symbol_info(symbol)
+    """info = mt5.symbol_info(symbol)
     if info is None:
         raise Exception(f"No se encontró información del símbolo {symbol}")
 
@@ -20,16 +32,27 @@ def calcular_sl_tp(symbol, entry_price, lotes, riesgo_usd, accion, ratio=2):
 
     # cuántos ticks equivalen al riesgo permitido
     ticks_riesgo = riesgo_usd / (lotes * tick_value)
-    distancia = ticks_riesgo * tick_size  # distancia en precio
+    distancia = ticks_riesgo * tick_size  # distancia en precio """
+
+    timeframe = mt5.TIMEFRAME_M5
+    numero_velas = 1
+    buffer = 5
+
+    candle = mt5.copy_rates_from_pos(symbol, timeframe, 0, numero_velas)
+    minimo_candle = candle[-1]['low']
+    distancia = entry_price - minimo_candle
 
     if accion == "compra":
-        sl = entry_price - distancia
-        tp = entry_price + distancia * ratio
+        sl = minimo_candle - buffer
+        tp = entry_price + ((entry_price - minimo_candle) * ratio)
     else:  # venta
-        sl = entry_price + distancia
-        tp = entry_price - distancia * ratio
+        sl = minimo_candle + buffer
+        tp = entry_price - ((entry_price - minimo_candle) * ratio)
+    
+    sl = round(sl, 1)
+    tp = round(tp, 1)
 
-    return sl, tp
+    return sl, tp, distancia
 
 def enviar_orden(signal_symbol, accion, lotes, riesgo_pct, ratio):
     """
@@ -55,15 +78,19 @@ def enviar_orden(signal_symbol, accion, lotes, riesgo_pct, ratio):
     equity = acc_info.equity
     riesgo_usd = equity * riesgo_pct
 
-    lotes = lotes * equity / 10000 # ajustar lotes según balance de referencia en este caso 10k
-    lotes = round(lotes / step_volume) * step_volume # redondear el loteje a uno permitido
+    """lotes = lotes * (equity / config.equity_referencia) # ajustar lotes según balance de referencia en este caso 10k
+    lotes = round(lotes / step_volume) * step_volume # redondear el loteje a uno permitido"""
 
     tick = mt5.symbol_info_tick(signal_symbol)
     if tick is None:
         raise Exception(f"No se pudo obtener el tick de {signal_symbol}")
 
+    spread = tick.bid - tick.ask
     precio = tick.ask if accion == "compra" else tick.bid
-    sl, tp = calcular_sl_tp(signal_symbol, precio, lotes, riesgo_usd, accion, ratio)
+    print(precio)
+    print(spread)
+    sl, tp, distancia = calcular_sl_tp(signal_symbol, precio, accion, ratio)
+    lotes = calcular_lotaje(signal_symbol, riesgo_usd, distancia) # faltaria validar el lote
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
