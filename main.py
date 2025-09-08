@@ -7,14 +7,17 @@ import config
 # FUNCIONES AUXILIARES
 # ==============================
 
-def calcular_lotaje(symbol, riesgo_usd, SL_distance):
+def calcular_lotaje(symbol, riesgo_usd, SL_distance_price):
     info = mt5.symbol_info(symbol)
     if info is None:
         raise Exception(f"No se encontró información del símbolo {symbol}")
     
     value_tick = info.trade_tick_value
+    size_tick = info.trade_tick_size
+    SL_distance_tick = SL_distance_price / size_tick
 
-    lot_size = riesgo_usd / (SL_distance * value_tick)
+    lot_size = riesgo_usd / (SL_distance_tick * value_tick) 
+    lot_size = round(lot_size, 1)
 
     return lot_size
     
@@ -35,11 +38,11 @@ def calcular_sl_tp(symbol, entry_price, accion, ratio=2):
     distancia = ticks_riesgo * tick_size  # distancia en precio """
 
     timeframe = mt5.TIMEFRAME_M5
-    numero_velas = 1
+    numero_velas = 2
     buffer = 5
 
     candle = mt5.copy_rates_from_pos(symbol, timeframe, 0, numero_velas)
-    minimo_candle = candle[-1]['low']
+    minimo_candle = candle[-2]['low']
     distancia = entry_price - minimo_candle
 
     if accion == "compra":
@@ -90,7 +93,7 @@ def enviar_orden(signal_symbol, accion, lotes, riesgo_pct, ratio):
     print(precio)
     print(spread)
     sl, tp, distancia = calcular_sl_tp(signal_symbol, precio, accion, ratio)
-    lotes = calcular_lotaje(signal_symbol, riesgo_usd, distancia) # faltaria validar el lote
+    lotes = calcular_lotaje(signal_symbol, riesgo_usd, sl) # faltaria validar el lote
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
