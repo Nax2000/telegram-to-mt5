@@ -14,29 +14,25 @@ def calcular_lotaje(symbol, riesgo_usd, SL_distance_price):
     
     value_tick = info.trade_tick_value
     size_tick = info.trade_tick_size
+    min_volume = info.volume_min
+    max_volume = info.volume_max
+    # step_volume = info.volume_step no parece necesario para validar
+
     SL_distance_tick = SL_distance_price / size_tick
 
     lot_size = riesgo_usd / (SL_distance_tick * value_tick) 
     lot_size = round(lot_size, 1)
+
+    if lot_size < min_volume or lot_size > max_volume:
+        raise Exception(f"Formato de lotaje no permitido por el broker: {lot_size}")
 
     return lot_size
     
 
 def calcular_sl_tp(symbol, entry_price, accion, ratio=2):
     """
-    Calcula StopLoss y TakeProfit en función del riesgo y ratio.
+    Calcula StopLoss y TakeProfit en función de la penultima vela y ratio.
     """
-    """info = mt5.symbol_info(symbol)
-    if info is None:
-        raise Exception(f"No se encontró información del símbolo {symbol}")
-
-    tick_value = info.trade_tick_value
-    tick_size = info.trade_tick_size
-
-    # cuántos ticks equivalen al riesgo permitido
-    ticks_riesgo = riesgo_usd / (lotes * tick_value)
-    distancia = ticks_riesgo * tick_size  # distancia en precio """
-
     timeframe = mt5.TIMEFRAME_M5
     numero_velas = 2
     buffer = 5
@@ -68,32 +64,25 @@ def enviar_orden(signal_symbol, accion, lotes, riesgo_pct, ratio):
 
     # Cambiar símbolo de señal Telegram a símbolo Broker correcto
     signal_symbol = config.simbolos_broker.get(signal_symbol, signal_symbol)
-       
+    
     info_symbol = mt5.symbol_info(signal_symbol)
     if info_symbol is None:
         raise Exception(f"No se encontró información del símbolo {signal_symbol}")
     
-    min_volume = info_symbol.volume_min
-    max_volume = info_symbol.volume_max
-    step_volume = info_symbol.volume_step
-
-
-    equity = acc_info.equity
-    riesgo_usd = equity * riesgo_pct
-
-    """lotes = lotes * (equity / config.equity_referencia) # ajustar lotes según balance de referencia en este caso 10k
-    lotes = round(lotes / step_volume) * step_volume # redondear el loteje a uno permitido"""
-
     tick = mt5.symbol_info_tick(signal_symbol)
     if tick is None:
         raise Exception(f"No se pudo obtener el tick de {signal_symbol}")
+    
+    equity = acc_info.equity
+    riesgo_usd = equity * riesgo_pct
 
-    spread = tick.bid - tick.ask
+    spread = tick.ask - tick.bid
     precio = tick.ask if accion == "compra" else tick.bid
-    print(precio)
-    print(spread)
+    print("Precio:", precio)
+    print("Spread:", spread )
     sl, tp, distancia = calcular_sl_tp(signal_symbol, precio, accion, ratio)
     lotes = calcular_lotaje(signal_symbol, riesgo_usd, sl) # faltaria validar el lote
+    print("Distancia:", distancia)
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
