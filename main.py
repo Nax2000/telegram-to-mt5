@@ -2,10 +2,25 @@ from telethon import TelegramClient, events
 import MetaTrader5 as mt5
 import re
 import config
+import subprocess
+import time
+import psutil
 
 # ==============================
 # FUNCIONES AUXILIARES
 # ==============================
+
+def ejecutar_mt5():
+    # Comprobar si MT5 ya está en ejecución
+    mt5_running = any("terminal64.exe" in p.name() for p in psutil.process_iter(['name']))
+
+    if not mt5_running:
+        print("🚀 Lanzando MetaTrader 5...")
+        subprocess.Popen([config.PATH])
+        time.sleep(5)  # Esperar a que arranque
+    else:
+        print("⚡ MT5 ya estaba abierto")
+
 
 def calcular_lotaje(symbol, riesgo_usd, SL_distance_price):
     info = mt5.symbol_info(symbol)
@@ -17,8 +32,10 @@ def calcular_lotaje(symbol, riesgo_usd, SL_distance_price):
     min_volume = info.volume_min
     max_volume = info.volume_max
     # step_volume = info.volume_step no parece necesario para validar
+    
+    print(SL_distance_price)
 
-    SL_distance_tick = SL_distance_price / size_tick
+    SL_distance_tick = abs(SL_distance_price) / size_tick
 
     lot_size = riesgo_usd / (SL_distance_tick * value_tick) 
     lot_size = round(lot_size, 1)
@@ -39,7 +56,7 @@ def calcular_sl_tp(symbol, entry_price, accion, ratio=2):
 
     candle = mt5.copy_rates_from_pos(symbol, timeframe, 0, numero_velas)
     minimo_candle = candle[-2]['low']
-    distancia = entry_price - minimo_candle
+    distancia = entry_price - minimo_candle - buffer
 
     if accion == "compra":
         sl = minimo_candle - buffer
@@ -81,7 +98,7 @@ def enviar_orden(signal_symbol, accion, lotes, riesgo_pct, ratio):
     print("Precio:", precio)
     print("Spread:", spread )
     sl, tp, distancia = calcular_sl_tp(signal_symbol, precio, accion, ratio)
-    lotes = calcular_lotaje(signal_symbol, riesgo_usd, sl) # faltaria validar el lote
+    lotes = calcular_lotaje(signal_symbol, riesgo_usd, distancia) # faltaria validar el lote
     print("Distancia:", distancia)
 
     request = {
@@ -102,6 +119,56 @@ def enviar_orden(signal_symbol, accion, lotes, riesgo_pct, ratio):
     result = mt5.order_send(request)
     print("Resultado orden:", result)
 
+def cerrar_orden(symbol):
+    """
+    Cierra todas las órdenes abiertas de un símbolo en MT5.
+    """
+    # Asegurarse de que el símbolo está habilitado
+    if not mt5.symbol_select(symbol, True):
+        print(f"No se pudo seleccionar {symbol}")
+        return
+
+    # Obtener posiciones abiertas en el símbolo
+    positions = mt5.positions_get(symbol=symbol)
+    if not positions:
+        print(f"No hay posiciones abiertas en {symbol}")
+        return
+    
+    for pos in positions:
+        ticket = pos.ticket
+        lot = pos.volume
+
+        if pos.type == mt5.POSITION_TYPE_BUY:  # 0 → Buy
+            order_type = mt5.ORDER_TYPE_SELL
+            price = mt5.symbol_info_tick(symbol).bid
+        elif pos.type == mt5.POSITION_TYPE_SELL:  # 1 → Sell
+            order_type = mt5.ORDER_TYPE_BUY
+            price = mt5.symbol_info_tick(symbol).ask
+        else:
+            print(f"Tipo de orden desconocido en ticket {ticket}")
+            continue
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": lot,
+            "type": order_type,
+            "position": ticket,
+            "price": price,
+            "deviation": 20,
+            "magic": config.magic_number,
+            "comment": "Señal cierra Telegram",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+
+        result = mt5.order_send(request)
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            print(f"❌ Error al cerrar {ticket}: {result.retcode}")
+        else:
+            print(f"✅ Orden {ticket} cerrada correctamente")
+    
+
 # ==============================
 # TELEGRAM LISTENER
 # ==============================
@@ -113,32 +180,51 @@ async def handler(event):
     msg = event.message.message
     print("Mensaje recibido:\n", msg)
 
-    # Regex para capturar: símbolo, acción, lotes
+    # Patrón abrir
     patron = r"OPERACIÓN\s*-\s*(\w+).*?(Compra|Venta).*?([\d.]+)\s*lotes"
     match = re.search(patron, msg, re.S | re.I)
 
-    if match:
-        symbol, accion, lotes = match.groups()
-        accion = accion.strip().lower()   # "compra" o "venta"
-        lotes = float(lotes)
+    # Patrón cerrar
+    patron_cierre = r"CERRAR\s*-\s*(\w+)"
+    match_cierre = re.search(patron_cierre, msg, re.S | re.I)
 
-        print(f"→ Señal detectada: {accion.upper()} {symbol} con {lotes} lotes")
+    # Inicializar MT5
+    if not mt5.initialize():
+        print("❌ Error al inicializar MT5:", mt5.last_error())
+        return
 
-        # Inicializar MT5
-        if not mt5.initialize():
-            print("❌ Error al inicializar MT5:", mt5.last_error())
-            return
+    try:
+        if match:
+            symbol, accion, lotes = match.groups()
+            accion = accion.strip().lower()   # "compra" o "venta"
+            lotes = float(lotes)
 
-        try:
-            enviar_orden(symbol, accion, lotes, config.riesgo_pct, config.ratio)
-        except Exception as e:
-            print("❌ Error:", e)
+            print(f"→ Señal detectada: {accion.upper()} {symbol} con {lotes} lotes")
 
+            try:
+                enviar_orden(symbol, accion, lotes, config.riesgo_pct, config.ratio)
+            except Exception as e:
+                print("❌ Error:", e)
+
+        elif match_cierre:
+            symbol = match_cierre.group(1)
+            print(f"→ Señal detectada: CERRAR {symbol}")
+
+            try:
+                cerrar_orden(symbol)
+            except Exception as e:
+                print("❌ Error al cerrar:", e)
+
+    except Exception as e:
+        print("❌ Error en handler:", e)
+
+    finally:
         mt5.shutdown()
 
 # ==============================
 # EJECUCIÓN
 # ==============================
+ejecutar_mt5()
 print("📡 Esperando señales de Telegram...")
 client.start()
 client.run_until_disconnected()
