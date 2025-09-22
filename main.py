@@ -55,19 +55,20 @@ def calcular_sl_tp(symbol, entry_price, accion, ratio=2):
     buffer = 5
 
     candle = mt5.copy_rates_from_pos(symbol, timeframe, 0, numero_velas)
-    minimo_candle = candle[-2]['low']
-    distancia = entry_price - minimo_candle - buffer
-
+    
     if accion == "compra":
-        sl = minimo_candle - buffer
-        tp = entry_price + ((entry_price - minimo_candle) * ratio)
+        ref = candle[-1]['low']
+        sl = ref - buffer
+        tp = entry_price + ((entry_price - ref) * ratio)
     else:  # venta
-        sl = minimo_candle + buffer
-        tp = entry_price - ((entry_price - minimo_candle) * ratio)
+        ref = candle[-1]['high']
+        sl = ref + buffer
+        tp = entry_price - ((ref - entry_price) * ratio)
     
     sl = round(sl, 1)
     tp = round(tp, 1)
 
+    distancia = abs(entry_price - sl - buffer)
     return sl, tp, distancia
 
 def enviar_orden(signal_symbol, accion, lotes, riesgo_pct, ratio):
